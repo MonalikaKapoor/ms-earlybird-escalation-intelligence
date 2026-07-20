@@ -66,6 +66,7 @@
   [data-theme="dark"] .pill.High{color:#ffc061}
   [data-theme="dark"] .pill.Low{color:#54d98c}
   [data-theme="dark"] .pill.Critical{color:#ff8a90}
+  [data-theme="dark"] .pill.Medium{background:rgba(232,198,30,.18);color:#f2d84e}
   .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
   .wl-row{display:grid;grid-template-columns:150px 1fr 54px;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer}
   .wl-row:last-child{border-bottom:0}
@@ -103,6 +104,8 @@
   .prob-bar{height:7px;border-radius:4px;background:var(--track);overflow:hidden;margin-top:4px}
   .prob-bar i{display:block;height:100%}
   .prob-num{font-weight:800;font-size:13px}
+  .band-why{font-size:10px;color:var(--muted);margin-top:3px;white-space:nowrap;font-weight:600}
+  .status-badge{display:inline-block;font-size:10px;font-weight:700;color:var(--muted);background:var(--tag-bg);border:1px solid var(--line);border-radius:5px;padding:1px 7px;margin-left:4px;vertical-align:middle;white-space:nowrap}
   .reassign{font-size:12px;border:1px solid var(--line);border-radius:7px;padding:5px 6px;max-width:150px}
   .reassign.changed{border-color:var(--blue);background:var(--crit-bg);background:rgba(10,155,245,.12);font-weight:600}
   .sentiment-neg{color:var(--crit);font-weight:700}
@@ -225,7 +228,7 @@
       <select id="prioFilter"></select>
       <select id="leaveFilter" title="Flag an engineer as on leave to surface their cases"></select>
       <select id="sortSel">
-        <option value="prob">Sort: Escalation probability ▼</option>
+        <option value="prob">Sort: Escalation probability ▼</option><option value="band">Sort: Risk band (severity)</option>
         <option value="oca">Sort: OCA ▼</option>
         <option value="sent">Sort: Sentiment (worst first)</option>
         <option value="due">Sort: Next update due ▲</option>
@@ -629,7 +632,7 @@ function renderDrivers(){
 function sentClass(s){if(/negative/i.test(s))return 'sentiment-neg';if(/positive/i.test(s))return 'sentiment-pos';return 'sentiment-neu';}
 
 function renderTopTable(){
-  const rows=DATA.slice().sort((a,b)=>b.prob-a.prob).slice(0,8);
+  const rows=DATA.filter(d=>['Critical','High','Medium'].indexOf(d.band)>=0).sort((a,b)=>b.prob-a.prob).slice(0,8);
   const t=document.getElementById('topTable');
   t.innerHTML=`<thead><tr><th>Case</th><th>Title</th><th>Engineer</th><th>Band</th><th>Escalation prob.</th><th>Key drivers</th></tr></thead><tbody>`+
     rows.map(d=>`<tr>
@@ -705,7 +708,8 @@ function filtered(){
     return true;
   });
   const s=state.sort;
-  rows.sort((a,b)=> s==='oca'?b.oca-a.oca : s==='sent'?a.sentScore-b.sentScore : s==='due'?(a.due||'~').localeCompare(b.due||'~') : b.prob-a.prob);
+  const _rank={Critical:4,High:3,Medium:2,Low:1,Escalated:0};
+  rows.sort((a,b)=> s==='band'?((_rank[b.band]||0)-(_rank[a.band]||0))||(b.prob-a.prob) : s==='oca'?b.oca-a.oca : s==='sent'?a.sentScore-b.sentScore : s==='due'?(a.due||'~').localeCompare(b.due||'~') : b.prob-a.prob);
   if(leave) rows.sort((a,b)=>(b.engineer===leave)-(a.engineer===leave));
   return rows;
 }
@@ -724,17 +728,21 @@ function renderCases(){
       const drivers=d.reason.split(';').map(s=>s.trim()).filter(Boolean);
       const changed=reassignMap[d.caseId];
       const fbv=fbMap[d.caseId];
+      const rawBand=d.prob>=0.75?'Critical':d.prob>=0.55?'High':d.prob>=0.30?'Medium':'Low';
+      const suppressed=(d.band==='Low'&&rawBand!=='Low');
+      const _st=(d.status||'').toLowerCase();
+      const why=/pending response/.test(_st)?'waiting on customer':/pending engineering/.test(_st)?'with engineering':/resolution provided/.test(_st)?'resolution provided':'deprioritized by status';
       const isLeave=leave&&d.engineer===leave;
       const opts=['Unassigned',...ENGINEERS].filter((v,idx,a)=>a.indexOf(v)===idx)
         .map(e=>`<option ${e===d.engineer?'selected':''}>${esc(e)}</option>`).join('');
       return `<tr class="${isLeave?'leave':''}" data-row="${i}" data-cid="${esc(d.caseId)}">
         <td><span class="caret" data-exp="${i}">▶</span></td>
         <td class="case-id">${esc(d.caseId)}<span class="fb-slot">${fbBadge(fbv)}</span></td>
-        <td class="ttl">${esc(d.title)}<small>${esc(d.org)} · ${esc(d.region)}</small></td>
+        <td class="ttl">${esc(d.title)}${d.status?(' <span class="status-badge">'+esc(d.status)+'</span>'):''}<small>${esc(d.org)} · ${esc(d.region)}</small></td>
         <td style="white-space:nowrap">${esc(d.priority)}</td>
-        <td><span class="pill ${esc(d.band)}"><span class="dot" style="background:${bandHex[d.band]||'#999'}"></span>${esc(d.band)}</span></td>
-        <td class="prob-cell"><span class="prob-num" style="color:${bandHex[d.band]||'#333'}">${d.probPct}%</span>
-          <div class="prob-bar"><i style="width:${d.probPct}%;background:${bandHex[d.band]||'#999'}"></i></div></td>
+        <td><span class="pill ${esc(d.band)}"><span class="dot" style="background:${bandHex[d.band]||'#999'}"></span>${esc(d.band)}</span>${suppressed?('<div class="band-why" title="Raw score '+d.probPct+'%, deprioritized by status">↓ '+why+'</div>'):''}</td>
+        <td class="prob-cell"><span class="prob-num" style="color:${suppressed?'var(--muted)':(bandHex[d.band]||'#333')}"${suppressed?' title="Raw model score — deprioritized to Low by status"':''}>${d.probPct}%</span>
+          <div class="prob-bar"><i style="width:${d.probPct}%;background:${suppressed?'#c3ccd8':(bandHex[d.band]||'#999')}"></i></div></td>
         <td>${d.oca.toFixed(2)}</td>
         <td class="${sentClass(d.sentiment)}">${esc(d.sentiment||'—')}</td>
         <td><select class="reassign ${changed?'changed':''}" data-id="${esc(d.caseId)}">${opts}</select>
