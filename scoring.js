@@ -3,7 +3,7 @@
  * Pure, dependency-free. Runs in BOTH Node (server pipeline) and the browser (dashboard).
  *
  *   Node:     const { scoreRow, scoreRows } = require("./scoring.js");
- *   Browser:  <script src="scoring.js"></script>  ->  window.MsEarlyBirdScoring.scoreRow(row)
+ *   Browser:  load via a script tag (src=scoring.js), then MsEarlyBirdScoring.scoreRow(row)
  *
  * Keep this file as the ONLY place the scoring math lives. The Node alert pipeline and the
  * dashboard both import it, so a weight change here updates both at once.
