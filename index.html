@@ -148,7 +148,22 @@
   /* assistant answer panel */
   .qa-output{grid-column:1/-1;width:100%;margin-top:4px;background:var(--input-bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:12.5px;line-height:1.55}
   .qa-loading{color:var(--muted)}
-  .qa-answer{white-space:pre-wrap;color:var(--ink)}
+  .qa-answer{color:var(--ink)}
+  .qa-answer p{margin:0 0 8px}
+  .qa-answer p:last-child{margin-bottom:0}
+  .qa-answer .md-h{font-weight:800;margin:12px 0 6px;color:var(--ink)}
+  .qa-answer .md-h:first-child{margin-top:0}
+  .qa-answer .md-h1{font-size:15px}
+  .qa-answer .md-h2{font-size:14px}
+  .qa-answer .md-h3{font-size:13px}
+  .qa-answer .md-h4{font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+  .qa-answer ul,.qa-answer ol{margin:4px 0 10px;padding-left:20px}
+  .qa-answer li{margin:3px 0}
+  .qa-answer strong{font-weight:800}
+  .qa-answer a{color:var(--blue-2);font-weight:600}
+  .qa-answer code{background:var(--row-hover);border-radius:4px;padding:1px 5px;font-size:11.5px;font-family:ui-monospace,Consolas,'Courier New',monospace}
+  .qa-answer pre{background:var(--row-hover);border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow:auto;margin:6px 0 10px}
+  .qa-answer pre code{background:none;padding:0}
   .qa-error{color:var(--crit)}
   .qa-error a{color:var(--blue-2);font-weight:600}
   .qa-error .qa-hint{color:var(--muted);font-weight:400}
@@ -672,6 +687,45 @@ function quickActionsHtml(caseId){
     <div class="qa-output" data-qa-out="${cid}" style="display:none"></div>
   </div>`;
 }
+/* --- minimal, XSS-safe Markdown renderer for assistant answers ---
+ * The whole string is HTML-escaped FIRST (via esc), then only a fixed allowlist
+ * of tags is emitted; links are restricted to http(s). No raw model HTML is ever
+ * inserted into the DOM. */
+function mdInline(s){
+  s=s.replace(/`([^`]+)`/g,'<code>$1</code>');
+  s=s.replace(/\*\*([^*]+?)\*\*/g,'<strong>$1</strong>');
+  s=s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  return s;
+}
+function renderMarkdown(src){
+  const lines=esc(src==null?'':String(src)).replace(/\t/g,'  ').split(/\n/);
+  const out=[]; let para=[]; const stack=[]; let code=null;
+  const flushPara=()=>{ if(para.length){ out.push('<p>'+mdInline(para.join(' '))+'</p>'); para=[]; } };
+  const closeTo=(indent)=>{ while(stack.length&&stack[stack.length-1].indent>=indent) out.push('</li></'+stack.pop().type+'>'); };
+  const closeAll=()=>{ while(stack.length) out.push('</li></'+stack.pop().type+'>'); };
+  for(const raw of lines){
+    if(/^\s*```/.test(raw)){ if(code){ out.push('<pre><code>'+code.join('\n')+'</code></pre>'); code=null; } else { flushPara(); closeAll(); code=[]; } continue; }
+    if(code){ code.push(raw); continue; }
+    if(!raw.trim()){ flushPara(); continue; }
+    const h=raw.match(/^(#{1,6})\s+(.*)$/);
+    if(h){ flushPara(); closeAll(); out.push('<div class="md-h md-h'+Math.min(h[1].length,4)+'">'+mdInline(h[2].trim())+'</div>'); continue; }
+    const li=raw.match(/^(\s*)([-*]|\d+[.)])\s+(.*)$/);
+    if(li){
+      flushPara();
+      const indent=Math.floor(li[1].length/2);
+      const type=/\d/.test(li[2])?'ol':'ul';
+      closeTo(indent+1);
+      if(stack.length&&stack[stack.length-1].indent===indent){ out.push('</li>'); }
+      else { out.push('<'+type+'>'); stack.push({type,indent}); }
+      out.push('<li>'+mdInline(li[3]));
+      continue;
+    }
+    if(stack.length) out.push(' '+mdInline(raw.trim())); else para.push(raw.trim());
+  }
+  if(code){ out.push('<pre><code>'+code.join('\n')+'</code></pre>'); }
+  flushPara(); closeAll();
+  return out.join('');
+}
 async function askFluffy(btn){
   const action=btn.getAttribute('data-qa-action');
   const caseId=btn.getAttribute('data-qa-case');
@@ -689,7 +743,7 @@ async function askFluffy(btn){
     const data=await r.json().catch(()=>({}));
     if(!r.ok || !data.ok) throw new Error((data && data.error) || ('HTTP '+r.status));
     out.innerHTML='<div class="qa-answer"></div>';
-    out.querySelector('.qa-answer').textContent=data.text||'(no response)';
+    out.querySelector('.qa-answer').innerHTML=renderMarkdown(data.text||'(no response)');
   }catch(e){
     const fallback=botUrls(caseId)[action];
     out.innerHTML='<div class="qa-error">⚠️ FluffyJaws unavailable: '+esc(String(e&&e.message||e))+
