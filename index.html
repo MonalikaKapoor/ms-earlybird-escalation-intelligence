@@ -660,11 +660,17 @@ function sentDisplay(txt,score){if(txt&&String(txt).trim())return String(txt);if
  * (POST /api/assistant -> local fj-mcp) and, if that's unavailable, as the
  * browser deep-link fallback to the AEMCS web assistant. */
 function botPrompts(caseId){
+  const persona =
+    `You are a senior AEM technical support engineer (AEM Cloud Service, AMS, and on-prem) helping a fellow support engineer triage and work their queue. Be a peer, not a tool: think alongside them, use the minimum words that help them act, and skip pleasantries, self-summaries, and generic advice. Understand the whole situation - the customer's pain, the technical root cause (customer code / configuration / platform), and exactly where the case stands right now - and surface what is broken, why, and what to do next. Quantify business impact whenever you can (launch blocked, publishing stopped, ingestion halted, number of users affected), since that drives urgency. If the title or notes reference Jira IDs (e.g. SITES-, GRANITE-, SKYOPS-, CQ-, FORMS-, CMSCM-, DAM-, or any PROJECT-NNNNN), look them up and fold in their status, priority, fix version, root cause, and key comments, labelled "from Jira: TICKET-ID". First look up the live Dynamics case ${caseId} for the latest notes and current state, then begin immediately with the output - do not narrate what you are about to do. Keep the response concise and presentable.`;
   return {
-    quick: `For case ${caseId}, generate a next potential polite response for the customer considering their last message and explicitly acknowledging the escalation risk for this case. Keep the tone calm, accountable, and solution-focused, confirm ownership, and set clear expectations for the next update.`,
-    summarize: `Summarize case ${caseId} from a support engineer's point of view into: 1) issue, 2) customer impact, 3) current status, 4) investigation performed so far, and 5) clearly labeled next steps. Make it suitable for an internal handoff or manager update.`,
-    related: `For case ${caseId}, identify any similar Dynamics support cases, related JIRA tickets, internal Wikis, Experience League documentation, Adobe HelpX articles, and KCS/KB articles. Provide a list of the most relevant references with clickable links where available and add a concise one-line explanation of how each item relates to this case.`,
-    investigate: `For case ${caseId}, suggest what next actions can be taken and what investigation steps should be performed from a senior support engineer's perspective. First briefly summarize what has already been done in the case, then propose the highest-impact next diagnostic steps, data/logs to collect, and potential remediation actions, ordered by priority.`
+    quick:
+      `${persona}\n\nTask: Draft the next customer-facing response for case ${caseId}. Write in the first person as the Adobe point of contact speaking directly to the customer ("we"/"I"). Explicitly acknowledge the escalation risk, confirm ownership, keep the tone calm, accountable, and solution-focused, and set a clear expectation for the next update. Do not expose internal ticket numbers, tool names, or internal process names ("our engineering team" is fine). For a first response: restate the problem in your own words to show you understood it, acknowledge the business impact briefly, ask only the single most important next question, and set a realistic timeline. For an ongoing response: address what was asked, state what we found or did, and say exactly what happens next. 2-4 short paragraphs. Output only the customer message.`,
+    summarize:
+      `${persona}\n\nTask: Summarize case ${caseId} for an internal handoff or manager update, from a support engineer's point of view: the issue, customer/business impact, current status, investigation performed so far, and clearly labelled next steps.`,
+    related:
+      `${persona}\n\nTask: For case ${caseId}, surface the most relevant related material - similar Dynamics cases, JIRA tickets, internal wikis, Experience League docs, Adobe HelpX articles, and KCS/KB articles. Return a short prioritised list with clickable links where available and a one-line note on how each relates to this case; favour the few most useful items over an exhaustive dump.`,
+    investigate:
+      `${persona}\n\nTask: For case ${caseId}, recommend how to move it forward from a senior support engineer's perspective. Briefly note what has already been done, then give the highest-impact next diagnostic steps, the data/logs to collect (Cloud Manager, AEM error/request logs, replication, dispatcher), and potential remediation actions, ordered by priority. Include relevant log excerpts inline if you can retrieve them.`
   };
 }
 function botUrls(caseId){
@@ -694,21 +700,24 @@ function quickActionsHtml(caseId){
 function mdInline(s){
   s=s.replace(/`([^`]+)`/g,'<code>$1</code>');
   s=s.replace(/\*\*([^*]+?)\*\*/g,'<strong>$1</strong>');
+  s=s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g,'$1<em>$2</em>');
   s=s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
   return s;
 }
 function renderMarkdown(src){
-  const lines=esc(src==null?'':String(src)).replace(/\t/g,'  ').split(/\n/);
-  const out=[]; let para=[]; const stack=[]; let code=null;
-  const flushPara=()=>{ if(para.length){ out.push('<p>'+mdInline(para.join(' '))+'</p>'); para=[]; } };
+  let text=esc(src==null?'':String(src)).replace(/\t/g,'  ');
+  text=text.replace(/([^\n])(#{2,6}\s)/g,'$1\n\n$2'); // split headings glued onto the previous line
+  const lines=text.split(/\n/);
+  const out=[]; let para=[]; const stack=[]; let code=null; let blank=false;
+  const flushPara=()=>{ if(para.length){ out.push('<p>'+para.map(mdInline).join('<br>')+'</p>'); para=[]; } };
   const closeTo=(indent)=>{ while(stack.length&&stack[stack.length-1].indent>=indent) out.push('</li></'+stack.pop().type+'>'); };
   const closeAll=()=>{ while(stack.length) out.push('</li></'+stack.pop().type+'>'); };
   for(const raw of lines){
     if(/^\s*```/.test(raw)){ if(code){ out.push('<pre><code>'+code.join('\n')+'</code></pre>'); code=null; } else { flushPara(); closeAll(); code=[]; } continue; }
     if(code){ code.push(raw); continue; }
-    if(!raw.trim()){ flushPara(); continue; }
+    if(!raw.trim()){ flushPara(); blank=true; continue; }
     const h=raw.match(/^(#{1,6})\s+(.*)$/);
-    if(h){ flushPara(); closeAll(); out.push('<div class="md-h md-h'+Math.min(h[1].length,4)+'">'+mdInline(h[2].trim())+'</div>'); continue; }
+    if(h){ flushPara(); closeAll(); out.push('<div class="md-h md-h'+Math.min(h[1].length,4)+'">'+mdInline(h[2].trim())+'</div>'); blank=false; continue; }
     const li=raw.match(/^(\s*)([-*]|\d+[.)])\s+(.*)$/);
     if(li){
       flushPara();
@@ -718,9 +727,12 @@ function renderMarkdown(src){
       if(stack.length&&stack[stack.length-1].indent===indent){ out.push('</li>'); }
       else { out.push('<'+type+'>'); stack.push({type,indent}); }
       out.push('<li>'+mdInline(li[3]));
-      continue;
+      blank=false; continue;
     }
-    if(stack.length) out.push(' '+mdInline(raw.trim())); else para.push(raw.trim());
+    // plain text: lazy list continuation only when no blank line separated it; otherwise a new paragraph
+    if(stack.length&&!blank){ out.push(' '+mdInline(raw.trim())); }
+    else { if(stack.length) closeAll(); para.push(raw.trim()); }
+    blank=false;
   }
   if(code){ out.push('<pre><code>'+code.join('\n')+'</code></pre>'); }
   flushPara(); closeAll();
