@@ -1,5 +1,8 @@
-# Local preview helper — not part of the deployed app
-_server.js
+# Local FluffyJaws session cookie — never commit
+.fjsession
+
+# Local editor / preview tooling
+.claude/
 
 # Scratch / OS files
 .DS_Store

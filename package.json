@@ -1,0 +1,12 @@
+{
+  "name": "ms-earlybird-escalation-intelligence",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ms. Early Bird — escalation intelligence dashboard with an in-app FluffyJaws assistant.",
+  "scripts": {
+    "start": "node _server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
