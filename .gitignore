@@ -1,0 +1,6 @@
+# Local preview helper — not part of the deployed app
+_server.js
+
+# Scratch / OS files
+.DS_Store
+Thumbs.db
